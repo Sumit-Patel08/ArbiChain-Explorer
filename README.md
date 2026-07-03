@@ -1,5 +1,9 @@
 # ArbiChain — Scaling Ethereum with Arbitrum
 
+[![Live Demo](https://img.shields.io/badge/●_LIVE-arbi--chain--explorer.vercel.app-28A0F0?style=for-the-badge&logo=vercel&logoColor=white)](https://arbi-chain-explorer.vercel.app/)
+
+> **Live site:** [https://arbi-chain-explorer.vercel.app/](https://arbi-chain-explorer.vercel.app/)
+
 An educational 4-page website about Arbitrum and Layer 2 blockchain scaling. Interactive concepts, live crypto prices, and a working proof-of-work block simulator running entirely in the browser.
 
 ## Pages
