@@ -19,8 +19,6 @@ export const Route = createFileRoute("/simulator")({
 
 /** Alias so the JSX below still reads naturally. */
 const sha256 = (input: string) => {
-  // Backwards-compatible wrapper — parse the concatenated fields we already build.
-  // The pages below call sha256(`${index}${data}${prev}${nonce}`), we forward as-is.
   const bytes = new TextEncoder().encode(input);
   return crypto.subtle.digest("SHA-256", bytes).then((buf) =>
     Array.from(new Uint8Array(buf))
@@ -31,6 +29,15 @@ const sha256 = (input: string) => {
 // re-export helper so tree-shakers don't drop the import
 void computeHash;
 
+const CHAIN_LENGTH = 4;
+
+const INITIAL_DATA = [
+  "First transaction: Alice → Bob 10 ARB",
+  "Second transaction: Bob → Carol 3 ARB",
+  "Third transaction: Carol → Dave 5 ARB",
+  "Fourth transaction: Dave → Eve 2 ARB",
+];
+
 interface BlockState {
   index: number;
   data: string;
@@ -40,50 +47,69 @@ interface BlockState {
   mining: boolean;
 }
 
+function createInitialBlocks(): BlockState[] {
+  return INITIAL_DATA.map((data, i) => ({
+    index: i + 1,
+    data,
+    previousHash: i === 0 ? GENESIS_PREV : "",
+    nonce: 0,
+    hash: "",
+    mining: false,
+  }));
+}
+
 function Simulator() {
-  const [b1, setB1] = useState<BlockState>({
-    index: 1,
-    data: "First transaction: Alice → Bob 10 ARB",
-    previousHash: GENESIS_PREV,
-    nonce: 0,
-    hash: "",
-    mining: false,
-  });
-  const [b2, setB2] = useState<BlockState>({
-    index: 2,
-    data: "Second transaction: Bob → Carol 3 ARB",
-    previousHash: "",
-    nonce: 0,
-    hash: "",
-    mining: false,
-  });
+  const [blocks, setBlocks] = useState<BlockState[]>(createInitialBlocks);
+  const [liveHashes, setLiveHashes] = useState<string[]>(() =>
+    Array(CHAIN_LENGTH).fill(""),
+  );
 
-  // Recompute hash whenever data / prev / nonce change (without mining).
-  // This makes tampering with data instantly invalidate the stored hash below.
-  const [b1Live, setB1Live] = useState("");
-  const [b2Live, setB2Live] = useState("");
-
+  // Recompute live hashes whenever any block field that feeds the hash changes.
   useEffect(() => {
-    sha256(`${b1.index}${b1.data}${b1.previousHash}${b1.nonce}`).then(setB1Live);
-  }, [b1.index, b1.data, b1.previousHash, b1.nonce]);
-  useEffect(() => {
-    sha256(`${b2.index}${b2.data}${b2.previousHash}${b2.nonce}`).then(setB2Live);
-  }, [b2.index, b2.data, b2.previousHash, b2.nonce]);
+    let cancelled = false;
+    (async () => {
+      const hashes = await Promise.all(
+        blocks.map((b) =>
+          sha256(`${b.index}${b.data}${b.previousHash}${b.nonce}`),
+        ),
+      );
+      if (!cancelled) setLiveHashes(hashes);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [blocks]);
 
-  // Keep b2.previousHash synced with b1's latest computed hash (live).
-  // This is the chain link: editing b1 propagates to b2 automatically.
+  // Keep each block's previousHash synced to the previous block's live hash.
+  // Editing block N propagates through N+1, N+2, … automatically.
   useEffect(() => {
-    if (b1Live && b1Live !== b2.previousHash) {
-      setB2((prev) => ({ ...prev, previousHash: b1Live }));
-    }
-  }, [b1Live, b2.previousHash]);
+    setBlocks((prev) => {
+      let changed = false;
+      const next = prev.map((b, i) => {
+        if (i === 0) return b;
+        const expectedPrev = liveHashes[i - 1];
+        if (!expectedPrev || b.previousHash === expectedPrev) return b;
+        changed = true;
+        return { ...b, previousHash: expectedPrev };
+      });
+      return changed ? next : prev;
+    });
+  }, [liveHashes]);
 
-  const b1Valid = !!b1.hash && b1.hash === b1Live && b1.hash.startsWith(DIFFICULTY_PREFIX);
-  const b2Valid =
-    !!b2.hash &&
-    b2.hash === b2Live &&
-    b2.hash.startsWith(DIFFICULTY_PREFIX) &&
-    b2.previousHash === b1Live;
+  const isValid = (i: number) => {
+    const b = blocks[i];
+    const live = liveHashes[i];
+    const hashOk =
+      !!b.hash && b.hash === live && b.hash.startsWith(DIFFICULTY_PREFIX);
+    const linkOk = i === 0 || b.previousHash === liveHashes[i - 1];
+    return hashOk && linkOk;
+  };
+
+  const updateBlock = (i: number, patch: Partial<BlockState>) => {
+    setBlocks((prev) =>
+      prev.map((b, idx) => (idx === i ? { ...b, ...patch } : b)),
+    );
+  };
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-16">
@@ -93,39 +119,35 @@ function Simulator() {
         </p>
         <h1 className="mt-2 text-4xl sm:text-5xl font-bold">Block Simulator</h1>
         <p className="mt-4 text-muted-foreground">
-          A tiny two-block chain with real SHA-256 proof-of-work. Mine each block until its hash
+          A four-block chain with real SHA-256 proof-of-work. Mine each block until its hash
           starts with <code className="text-[#28A0F0]">{DIFFICULTY_PREFIX}</code>, then try
-          tampering with Block 1 and watch the chain break.
+          tampering with any earlier block and watch every block after it break.
         </p>
       </div>
 
-      <div className="mt-10 grid gap-6 lg:grid-cols-2">
-        <BlockCard
-          block={b1}
-          liveHash={b1Live}
-          valid={b1Valid}
-          onDataChange={(v) => setB1((p) => ({ ...p, data: v, hash: "", nonce: 0 }))}
-          onMined={(nonce, hash) => setB1((p) => ({ ...p, nonce, hash, mining: false }))}
-          onMiningStart={() => setB1((p) => ({ ...p, mining: true }))}
-          previousEditable={false}
-        />
-        <BlockCard
-          block={b2}
-          liveHash={b2Live}
-          valid={b2Valid}
-          onDataChange={(v) => setB2((p) => ({ ...p, data: v, hash: "", nonce: 0 }))}
-          onMined={(nonce, hash) => setB2((p) => ({ ...p, nonce, hash, mining: false }))}
-          onMiningStart={() => setB2((p) => ({ ...p, mining: true }))}
-          previousEditable={false}
-        />
+      <div className="mt-10 grid gap-6 md:grid-cols-2">
+        {blocks.map((block, i) => (
+          <BlockCard
+            key={block.index}
+            block={block}
+            liveHash={liveHashes[i]}
+            valid={isValid(i)}
+            onDataChange={(v) => updateBlock(i, { data: v })}
+            onMined={(nonce, hash) =>
+              updateBlock(i, { nonce, hash, mining: false })
+            }
+            onMiningStart={() => updateBlock(i, { mining: true })}
+          />
+        ))}
       </div>
 
       <div className="mt-8 glass rounded-2xl p-5 flex items-start gap-3">
         <Info size={18} className="text-[#28A0F0] mt-0.5 shrink-0" />
         <p className="text-sm text-muted-foreground">
-          Change Block 1's data and watch the chain break — this is{" "}
+          Mine all four blocks, then change Block 2's data while Block 1 stays valid — Blocks 2,
+          3 and 4 turn red. That cascade is{" "}
           <span className="text-foreground font-medium">immutability in action</span>. Re-mine
-          Block 1, then Block 2, to restore the chain.
+          from the broken block onward to restore the chain.
         </p>
       </div>
 
@@ -137,10 +159,26 @@ function Simulator() {
         </p>
         <div className="mt-6 grid gap-5 md:grid-cols-2 lg:grid-cols-4">
           {[
-            ["1", "Mine Block 1", "Click the ⛏ Mine button on Block 1. It'll try nonce after nonce until it finds one whose hash starts with '00'."],
-            ["2", "Mine Block 2", "Now mine Block 2. Notice its 'Previous Hash' automatically matches Block 1's hash — that's the chain link."],
-            ["3", "Tamper with Block 1", "Edit Block 1's data. Both blocks instantly turn red — the hashes no longer line up."],
-            ["4", "Repair the chain", "Re-mine Block 1, then re-mine Block 2. Both go green again. This is exactly how real blockchains resist tampering."],
+            [
+              "1",
+              "Mine all four blocks",
+              "Click ⛏ Mine on Blocks 1 → 4 in order. Each block's Previous Hash automatically links to the one before it.",
+            ],
+            [
+              "2",
+              "Tamper mid-chain",
+              "Edit Block 2's data. Block 1 stays green, but Blocks 2, 3 and 4 instantly turn red — the chain is broken from that point on.",
+            ],
+            [
+              "3",
+              "Try Block 1 too",
+              "Reset and mine everything again, then edit Block 1. Every block after it fails. One bad link poisons the rest of history.",
+            ],
+            [
+              "4",
+              "Repair the chain",
+              "Re-mine from the first broken block onward (e.g. 2, then 3, then 4). Each goes green again only when its link is honest.",
+            ],
           ].map(([n, t, d]) => (
             <div key={n} className="glass rounded-2xl p-6">
               <div className="w-10 h-10 rounded-xl gradient-bg flex items-center justify-center font-display font-bold text-white">
@@ -190,21 +228,24 @@ function Simulator() {
           <p className="mt-3 text-muted-foreground leading-relaxed">
             Real Bitcoin requires a hash starting with roughly 19 zeros instead of just 2 — that
             takes the entire global mining network about 10 minutes per block. Real Ethereum used
-            to work the same way but switched to <span className="text-foreground font-medium">Proof-of-Stake</span>{" "}
-            in 2022, where validators lock up ETH as collateral instead of burning electricity.
+            to work the same way but switched to{" "}
+            <span className="text-foreground font-medium">Proof-of-Stake</span> in 2022, where
+            validators lock up ETH as collateral instead of burning electricity.
           </p>
           <p className="mt-3 text-muted-foreground leading-relaxed">
             Arbitrum takes a totally different approach — it doesn't mine at all. It trusts a
             sequencer to order transactions and lets anyone challenge bad ones. But the core idea
-            you just played with — <span className="text-foreground font-medium">linked hashes make history unforgeable</span> —
-            is the foundation every blockchain, including Arbitrum, is built on.
+            you just played with —{" "}
+            <span className="text-foreground font-medium">
+              linked hashes make history unforgeable
+            </span>{" "}
+            — is the foundation every blockchain, including Arbitrum, is built on.
           </p>
         </div>
       </section>
     </div>
   );
 }
-
 
 interface BlockCardProps {
   block: BlockState;
@@ -213,7 +254,6 @@ interface BlockCardProps {
   onDataChange: (v: string) => void;
   onMined: (nonce: number, hash: string) => void;
   onMiningStart: () => void;
-  previousEditable: boolean;
 }
 
 function BlockCard({
@@ -274,9 +314,16 @@ function BlockCard({
     setMining(false);
   }, [block.data, block.index, block.previousHash, onMined, onMiningStart]);
 
-  useEffect(() => () => {
-    cancelRef.current = true;
-  }, []);
+  useEffect(
+    () => () => {
+      cancelRef.current = true;
+    },
+    [],
+  );
+
+  // Show invalid styling whenever a mined block no longer checks out,
+  // including when an earlier block's tamper cascades into this one.
+  const showInvalid = !!block.hash && !valid;
 
   return (
     <div
@@ -342,7 +389,7 @@ function BlockCard({
         <Field label="Hash">
           <code
             className={`block w-full rounded-xl border px-3 py-2 text-xs font-mono break-all ${
-              block.hash && !valid
+              showInvalid
                 ? "bg-red-500/10 border-red-500/30 text-red-300"
                 : "bg-white/5 border-white/10"
             }`}

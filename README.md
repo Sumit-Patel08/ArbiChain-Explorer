@@ -11,7 +11,7 @@ An educational 4-page website about Arbitrum and Layer 2 blockchain scaling. Int
 1. **Home (`/`)** — Hero, a "How Arbitrum works" explainer, feature cards, glossary and FAQ.
 2. **Concepts (`/concepts`)** — Side-by-side comparison cards (Web2 vs Web3, Ethereum vs Bitcoin, Public vs Private Key, Blockchain vs Traditional DB) with a glowing VS badge and plain-English takeaways.
 3. **Live Prices (`/prices`)** — Live USD prices and 24h changes for BTC, ETH, SOL, ARB and MATIC via the CoinGecko API. Auto-refreshes every 60 seconds, with a 5-second rate-limit cooldown on the manual refresh button.
-4. **Block Simulator (`/simulator`)** — A two-block chain that mines real SHA-256 proof-of-work in the browser (difficulty `"00"`). Tamper with Block 1 and both blocks turn red — the classic immutability cascade.
+4. **Block Simulator (`/simulator`)** — A four-block chain that mines real SHA-256 proof-of-work in the browser (difficulty `"00"`). Tamper with any earlier block and every block after it turns red — the classic immutability cascade.
 
 ## Local setup
 
@@ -56,5 +56,5 @@ src/
 
 - CoinGecko's free tier can rate-limit under heavy use; the client throttles manual refreshes but a server cache would be more robust.
 - Simulator difficulty is fixed at prefix `"00"`. An adjustable difficulty slider would make the PoW cost visible.
-- Chain length is fixed at two blocks for clarity — a "+ Add block" button could extend the cascade demo.
+- Chain length is fixed at four blocks for the cascade demo — a "+ Add block" button could let users grow it further.
 - Prices are not persisted; a small Supabase-backed `price_history` table would enable a real sparkline.
